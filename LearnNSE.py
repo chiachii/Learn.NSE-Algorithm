@@ -22,7 +22,7 @@ class LearnNSE:
         self.weights = []
         
         # Checks that there is at least one model in the model set
-        if len(self.models) == 0:
+        if len(self.models):
             # Step1: Compute error of the existing ensemble on new data
             false_pred_num = 0
             for idx in range(dataset_length):
