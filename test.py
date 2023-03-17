@@ -1,7 +1,7 @@
 from LearnNSE import *
 
-
-def get_next_train(df, batch, k, target_name):
+# get the dataset in next time step
+def get_next_dataset(df, batch, k, target_name):
     '''
     @df: data frame
     @batch: the number of training datasets you need
@@ -36,7 +36,7 @@ for k in range(1,RunTime+1):
     # at least a model inside    
     if k == 1:
         # get the dataset for training
-        X_train, y_train = get_next_train(df=df, batch=batch, k=k, target_name='Label')
+        X_train, y_train = get_next_dataset(df=df, batch=batch, k=k, target_name='Label')
         # training model
         LearnPPNSE.fit(X_train, y_train)
         # re-compute voting weight
@@ -44,7 +44,7 @@ for k in range(1,RunTime+1):
         
     else:
         # get the dataset for training
-        X_train, y_train = get_next_train(df=df, batch=batch, k=k, target_name='Label')
+        X_train, y_train = get_next_dataset(df=df, batch=batch, k=k, target_name='Label')
         # re-build the error distribution
         LearnPPNSE.redistribute_error_rate(X_train, y_train)
         # training model
@@ -54,7 +54,7 @@ for k in range(1,RunTime+1):
 
     # testing & recording the score
     if k < RunTime:
-        X_test, y_test = get_next_train(df=df, batch=batch, k=k+1, target_name='Label')
+        X_test, y_test = get_next_dataset(df=df, batch=batch, k=k+1, target_name='Label')
         score_B = LearnPPNSE.score(X_test, y_test)
-        record.append(round(score_B, 3))
+        record.append(round(score, 3))
 ################################################
