@@ -1,93 +1,176 @@
 import numpy as np
 import math
+import copy as cp
+from sklearn.ensemble import RandomForestClassifier
+
+# define dot function: calculate the inner product used in recompute voting weight.
+def dot(K, L):
+   if len(K) != len(L):
+      return 0
+   return sum(i[0] * i[1] for i in zip(K, L))
 
 class LearnNSE:
-    def __init__(self, base_classifier, class_num=10, alpha=0.1, beta=0.5):
-        self.base_classifier = base_classifier
-        self.alpha = alpha
-        self.beta = beta
+    '''Learn++.NSE ensemble classifier
+    <Parameters>
+    @base_classifier: arbitary supervised classifier (default=RandomForestClassifier)
+    @class_num: int (default=10)
+    @slope: float (default=0.5)
+    @crossing_point: float (default=10.0)
+    @models: list (default=None)
+    @voting_weights: list (default=None)
+    @error_weights: list (default=None)
+    @error_distribution: list (default=None)
+    '''
+    def __init__(self, base_classifier=RandomForestClassifier(n_estimators=100, random_state=10),
+                 alpha=0.5, beta=10.0):
+        self.base_classifier = cp.deepcopy(base_classifier) # reset a model for current dataset
         self.models = []
-        self.weights = []
-        self.time_weight_hist = []
-        self.class_num = class_num
+        self.slope = alpha
+        self.crossing_point = beta
+        self.voting_weights = [1.0] # default=1.0 
+        self.error_distribution = []
+        self.bkts = [] # save beta computed from the formula based on punishment of error rate
+        self.wkts = []
 
-    def fit(self, X, y):
-        # Set parameters
-        error_weight = []
-        time_weight = []
+    def fit(self, X_train, y_train):
+        '''Function fit(): training model, and ensemble them
+        <Parameters>
+        @X_train: Dataframe
+            A multi-dimension dataset for training model
+        @y_train: Dataframe {0,1,2,...,n} {0,1,2,...,n}
+            The set of label of each line of training data
+        @base_classifier: arbitary supervised classifier (default=RandomForestClassifier)
+            For training new sub-classifier into self.models
+        '''
+        clf = cp.deepcopy(self.base_classifier)
+        clf.fit(X_train, y_train)
+        self.models.append(clf)
 
-        # Initialize weights
-        dataset_length = len(X)
-        current_weights = [1.0]*dataset_length
-        self.weights = []
+    def predict(self, X_test):
+        '''Function predict(): testing model, and get the result from the ensemble model
+        <Parameters>
+        @X_test: Dataframe
+            A multi-dimension dataset for testing model
         
-        # Checks that there is at least one model in the model set
-        if len(self.models):
-            # Step1: Compute error of the existing ensemble on new data
-            false_pred_num = 0
-            for idx in range(dataset_length):
-                if self.predict(X[idx]) == y[idx]:
-                    continue
-                else:
-                    false_pred_num += 1
-            Et = false_pred_num/dataset_length # Error of the existing ensemble
+        <Returns>
+        @y_pred: numpy.ndarray
+            A numpy.ndarray with the label prediction for all the samples in X
+        '''
+        y_pred = []
+        t = len(self.models)
+        for idx in range(len(X_test)):
+            weighted_pred = [0.0]
+            temp_pred = []
+            for k in range(1, t+1):
+                clf = self.models[k-1]
+                temp_target = clf.predict(X_test[idx:idx+1]) # Take a column of data each time to predict
+                # add new label
+                if (temp_target[0]+1) > len(weighted_pred):
+                    weighted_pred.append(0.0)
+                # add voting weight in corresponding index
+                weighted_pred[temp_target[0]] += self.voting_weights[k-1]
 
-            # Step2: Update and Normalize instance weights
-            for idx in range(dataset_length):
-                if self.predict(X[idx]) == y[idx]:
-                    current_weights[idx] = Et
-                else:
-                    current_weights[idx] = 1
-
-        # Step3: Call BaseClassifier with new data
-        new_model = self.base_classifier.fit(X)
-        self.models.append(new_model)
-
-        # Step4: Evaluate all existing classifiers on new data
-        for sub_classifier in self.models:
-            temp_error = 0
-            for idx in range(dataset_length):
-                if sub_classifier.predict(X[idx]) == y[idx]:
-                    temp_error += current_weights[idx]
-                else:
-                    continue
-            # Set the maximum value of the error to 1/2
-            if temp_error > 0.5:
-                temp_error = 0.5
-            # Normalized the value of error
-            temp_error = temp_error/(1-temp_error)
-            # Add to the error list(@error_weight)
-            error_weight.append(temp_error)
-
-        # Step5: Compute the weighted average of all normalized errors for k-th classifier
-        for idx in range(len(self.models)):
-            power_value = (-1)*(self.alpha)*(idx-self.beta)
-            temp_time_weight = 1/(1 + np.exp(power_value))
-            if len(self.time_weight_hist):
-                temp_time_weight = temp_time_weight/sum(self.time_weight_hist[idx])
-                self.time_weight_hist.append(temp_time_weight)
+            temp_pred.append(weighted_pred.index(max(weighted_pred))) # Get the Max value in the List as prediction of that row (X)
+            y_pred.append(temp_pred)
+        return np.array(y_pred) # Todo: prediction needs to time the weight
+    
+    def score(self, X_test, y_test):
+        '''Function score(): testing model, and ensemble them
+        <Parameters>
+        @X_test: Dataframe
+            A multi-dimension dataset for testing model
+        @y_test: Dataframe
+            The set of label of each line of testing data
+        @score_list: List
+            Save the prediction accuracy in binary 
+        '''
+        score_list = []
+        y_pred = self.predict(X_test)
+        for idx in range(len(X_test)):
+            if y_pred[idx] == y_test.values[idx][0]:
+                score_list.append(1)
             else:
-                time_weight.append(temp_time_weight)
-                self.time_weight_hist.append(time_weight)
+                score_list.append(0)
+        return np.sum(score_list)/len(score_list)
+    
+    def redistribute_error_rate(self, X_train, y_train): # number of models = t-1
+        '''Function redistribute_error_rate(): redistribution on newest dataset for evaluate all of the classifier in Learn++.NSE
+        <Parameters>
+        @X_train: Dataframe
+            A multi-dimension dataset for training model
+        @y_train: Dataframe {0,1,2,...,n}
+            The set of label of each line of training data
+        '''
+        error_distribution = []
+        ErrorRate = 1.0-self.score(X_train, y_train) 
+        y_pred = self.predict(X_train)
+        for idx in range(len(X_train)):
+            if y_pred[idx] == y_train.values[idx][0]:
+                error_distribution.append(ErrorRate)
+            else:
+                error_distribution.append(1)
+        self.error_distribution = error_distribution
 
-        # Step6: Calculate classifier voting weights
-        for idx in range(len(self.models)):
-            beta_bar = sum(np.multiply(time_weight, error_weight))# the weight average of all normalized error
-            final_weight = math.log(1/beta_bar)
-        # Obtain the weight of each model in final hypothesis     
-        self.weights.append(final_weight)
+    def revoting(self, X_train, y_train): # number of models = t
+        '''Function revoting(): update the weight based on error rate for output the prediction
+        <Parameters>
+        @X_train: Dataframe
+            A multi-dimension dataset for training model
+        @y_train: Dataframe {0,1,2,...,n}
+            The set of label of each line of training data
+        @ekt: float
+            The punishment of each sub-classifier
+        '''
+        # check whether self.error_distribution need initialization
+        if len(self.error_distribution) == 0:
+            self.error_distribution = [1/len(X_train)]*len(X_train)
 
-    # Step7: Obtain the final hypothesis    
-    def predict(self, X):
-        output = []
-        y_pred = [0]*self.class_num
-        for data_idx in range(len(X)):
-            for model_idx in range(len(self.models)):
-                sub_classifier = self.models[model_idx]
-                target = sub_classifier.predict(X[data_idx])
-                y_pred[target] += self.weights[model_idx]
-            # Finish one instance
-            output.append(y_pred.index(max(y_pred)))
+        ##### Step 5-1. Compute the Error-based Weight #####
+        # bkt_list = [] # Record penalties until all models have been evaluated
+        t = len(self.models)
+        self.bkts.append([])  
+        for k in range(1, t+1):
+            clf = self.models[k-1]
+            ekt = 0
+            y_pred = clf.predict(X_train)
+            for idx in range(len(X_train)):
+                if y_pred[idx] != y_train.values[idx][0]:
+                    ekt += self.error_distribution[idx]
+            
+            ekt = ekt/np.sum(self.error_distribution)
+            # print('ekt={}'.format(ekt)) # check the performance of each model on newest dataset
+            if ekt > 0.5:
+                bkt = 0.5/(1-0.5)
+            else:
+                bkt = ekt/(1-ekt)
+            # store normalized error for this classifier
+            self.bkts[k-1].append(bkt)
+        #####################################################
 
-        return output
-        
+        ##### Step 5-2. Compute the Time-based Weigh t#####
+        # compute the (time) weighte for each model on current time step
+        curr_wkt_list = []
+        self.wkts.append([])    
+        for k in range(1, t+1):
+            wkt = 1.0 / (1.0 + np.exp((-1)*self.slope*(t - k - self.crossing_point)))
+            curr_wkt_list.append(wkt)
+        # compute the (time) weighted normalized errors for kth classifier h_k
+        t = len(self.models)
+        for k in range(1, t+1):
+            wkt = curr_wkt_list[k-1]
+            
+            if len(self.wkts[k-1]) != 0:
+                wkt = wkt/(np.sum(self.wkts[k-1]) + wkt)
+            else:
+                wkt = wkt/wkt # the time weight of newest model 
+            # store the normalized (time) errors
+            self.wkts[k-1].append(wkt)
+        ####################################################
+
+        ##### Step 6. Calculate the voting weight #####
+        voting_weight_list = []
+        for k in range(1, t+1):
+            TimeAndErrorWeight = np.sum(dot(self.bkts[k-1], self.wkts[k-1])) + 5e-2 # add deviation 5e-2 to avoid that the value equals to 0
+            voting_weight_list.append(np.log(1/TimeAndErrorWeight))
+        self.voting_weights = voting_weight_list
+        ###############################################
