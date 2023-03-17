@@ -37,7 +37,7 @@ class LearnNSE:
         <Parameters>
         @X_train: Dataframe
             A multi-dimension dataset for training model
-        @y_train: Dataframe {0,1,2,...,n} {0,1,2,...,n}
+        @y_train: Dataframe {0,1,2,...,n}
             The set of label of each line of training data
         @base_classifier: arbitary supervised classifier (default=RandomForestClassifier)
             For training new sub-classifier into self.models
