@@ -13,7 +13,6 @@ class LearnNSE:
     '''Learn++.NSE ensemble classifier
     <Parameters>
     @base_classifier: arbitary supervised classifier (default=RandomForestClassifier)
-    @class_num: int (default=10)
     @slope: float (default=0.5)
     @crossing_point: float (default=10.0)
     @models: list (default=None)
